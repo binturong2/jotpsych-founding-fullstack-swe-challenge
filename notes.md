@@ -21,12 +21,29 @@ Plus i reilized that after recording stopped i do not know whats going on (no fe
 
 
 ### 2. Loading State
+> The application currently provides no feedback while audio is being transcribed, which can take a while. Add a loading indicator that:
+> - Shows when transcription processing begins
+> - Displays while waiting for the transcription result
+> - Gracefully transitions when the transcription completes
 
-The application currently provides no feedback while audio is being transcribed, which can take a while. Add a loading indicator that:
+There is no way to get loading state from AudioRecorder now so it's time to dig into the startRecording func and it's a mess there...
 
-- Shows when transcription processing begins
-- Displays while waiting for the transcription result
-- Gracefully transitions when the transcription completes
+... All test time later ...
+
+Oookey, it was a huge task there and i did a bunch of changes to make everything work. I have no more time to check other tasks but maybe i solved some of them in the process.
+So what i did:
+- I added tsconfig.json to stop my IDE from yelling at me
+- I moved request microphone access and create media recorder to their own functions and moved all of them into AudioRecorderService
+- I improved transcribeAudio APIService function and added ability to cancel the request (because it takes a while and user can rerun recording, so we do not want to load our backend)
+- Then rewrited all async functions with useEffect (actually i started with that and only after did all other stuff)
+- And then i added new props onTranscriptionStart, onTranscriptionCancel, onTranscriptionFailed to AudioRecorder component
+- And at the end updated App to handle all of that
+
+
+--- END OF TIME ---
+
+
+
 
 ### 3. Version Compatibility System
 
