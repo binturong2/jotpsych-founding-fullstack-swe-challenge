@@ -4,6 +4,14 @@ interface APIResponse<T> {
   version?: string;
 }
 
+interface APIResponseTranscribeAudio<T> {
+  data?: {
+    transcription?: string;
+  } & T;
+  error?: string;
+  version?: string;
+}
+
 class APIService {
   private baseUrl: string = "http://localhost:8000";
   private currentVersion: string = "1.0.0";
@@ -13,7 +21,8 @@ class APIService {
   private async makeRequest<T>(
     endpoint: string,
     method: "GET" | "POST" | "PUT" | "DELETE" = "GET",
-    body?: FormData | object
+    body?: FormData | object,
+    signal?: AbortSignal
   ): Promise<APIResponse<T>> {
     try {
       const headers: HeadersInit = {
@@ -29,6 +38,7 @@ class APIService {
         method,
         headers,
         body: body instanceof FormData ? body : JSON.stringify(body),
+        signal,
       };
 
       const response = await fetch(
@@ -38,16 +48,27 @@ class APIService {
       const data = await response.json();
       return { data: data };
     } catch (error) {
+      if (error.name === "AbortError") {
+        return { error: "Request was aborted" };
+      }
       return { error: `Request failed: ${error}` };
     }
   }
 
   // Updated transcribeAudio using the generic request handler
-  async transcribeAudio(audioBlob: Blob): Promise<APIResponse<string>> {
+  transcribeAudio(
+    audioBlob: Blob
+  ): { response: Promise<APIResponseTranscribeAudio<string>>; cancel: () => void } {
     const formData = new FormData();
     formData.append("audio", audioBlob);
 
-    return this.makeRequest<string>("/transcribe", "POST", formData);
+    const controller = new AbortController(); // Create a new AbortController
+    const response = this.makeRequest<string>("/transcribe", "POST", formData, controller.signal);
+
+    return {
+      response,
+      cancel: () => controller.abort(), // Return a cancel method
+    };
   }
 }
 
