@@ -1,68 +1,96 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
+import APIService from "../services/APIService";
+import AudioRecorderService from "../services/AudioRecorderService";
 
 const MAX_RECORDING_TIME_SECONDS = 10;
 
-const AudioRecorder = ({ onTranscriptionComplete }) => {
+const AudioRecorder = (props: { onTranscriptionStart: Function; onTranscriptionCancel: Function; onTranscriptionFailed: Function; onTranscriptionComplete: Function; }) => {
+  const { onTranscriptionStart, onTranscriptionCancel, onTranscriptionFailed, onTranscriptionComplete } = props;
+
+  const [isRecordingRequested, setIsRecordingRequested] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
+
+  const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordingIntervalRef = useRef(null);
   const maxRecordingTimerRef = useRef(null);
+  const transcriptionCancelRef = useRef(null);
 
-  const finalRecordingTime = useMemo(
-    () => (!isRecording && recordingTime) || 0,
-    [isRecording, recordingTime],
-  );
-
-  const startRecording = async () => {
-    try {
-      setRecordingTime(0);
-
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream);
-      const audioChunks: Blob[] = [];
-
-      recorder.ondataavailable = (event) => {
-        audioChunks.push(event.data);
-      };
-
-      recorder.onstop = async () => {
-        const audioBlob = new Blob(audioChunks, { type: "audio/wav" });
-        const formData = new FormData();
-        formData.append("audio", audioBlob);
-
-        try {
-          // TODO: Use APIService for api requests
-          const response = await fetch("http://localhost:8000/transcribe", {
-            method: "POST",
-            body: formData,
-          });
-          const data = await response.json();
-          onTranscriptionComplete(data.transcription);
-        } catch (error) {
-          console.error("Error sending audio:", error);
-        }
-
-        stream.getTracks().forEach((track) => track.stop());
-      };
-
-      recorder.start();
-      mediaRecorderRef.current = recorder;
-      setIsRecording(true);
-    } catch (error) {
-      console.error("Error accessing microphone:", error);
-    }
-  };
+  const startRecording = useCallback(() => {
+    setRecordingTime(0);
+    setAudioBlob(null);
+    setIsRecordingRequested(true);
+  }, []);
 
   const stopRecording = useCallback(() => {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
       mediaRecorderRef.current.stop();
       setIsRecording(false);
+      setIsRecordingRequested(false);
       clearTimeout(maxRecordingTimerRef.current);
       clearInterval(recordingIntervalRef.current);
     }
   }, []);
+
+  useEffect(() => {
+    if (!isRecordingRequested) {
+      return;
+    }
+
+    const startStream = async () => {
+      try {
+        const stream = await AudioRecorderService.requestMicrophoneAccess();
+        const recorder = AudioRecorderService.createMediaRecorder(stream, setAudioBlob);
+        recorder.start();
+        mediaRecorderRef.current = recorder;
+        setIsRecording(true);
+        onTranscriptionCancel?.();
+      } catch (error) {
+        console.error(error.message);
+        setIsRecordingRequested(false);
+      }
+    };
+
+    startStream();
+
+    return () => {
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
+        mediaRecorderRef.current.stop();
+      }
+    };
+  }, [isRecordingRequested, onTranscriptionCancel]);
+
+
+  useEffect(() => {
+    if (!audioBlob) {
+      transcriptionCancelRef.current?.();
+      return;
+    }
+
+    const handleRecordingStop = async (audioBlob) => {
+      try {
+        onTranscriptionStart?.();
+        const transcribeAudio = APIService.transcribeAudio(audioBlob);
+        transcriptionCancelRef.current = transcribeAudio.cancel;
+        const response = await transcribeAudio.response;
+        transcriptionCancelRef.current = null;
+        if (response.error && response.error !== "Request was aborted") {
+          throw new Error(response.error);
+        }
+        if (response.data?.transcription) {
+          onTranscriptionComplete?.(response.data.transcription);
+        }
+      } catch (error) {
+        console.error("Error transcribing audio:", error.message);
+        transcriptionCancelRef.current = null;
+        onTranscriptionFailed?.(error.message);
+      }
+    };
+
+    handleRecordingStop(audioBlob);
+  }, [audioBlob, onTranscriptionStart, onTranscriptionFailed, onTranscriptionComplete]);
 
   useEffect(() => {
     if (!isRecording) {
@@ -94,12 +122,6 @@ const AudioRecorder = ({ onTranscriptionComplete }) => {
 
   return (
     <div className="flex flex-col items-center gap-4">
-      {finalRecordingTime > 0 && (
-        <p className="text-sm text-gray-600">
-          Final recording time: {finalRecordingTime}s
-        </p>
-      )}
-
       <button
         onClick={isRecording ? stopRecording : startRecording}
         className={`px-6 py-3 rounded-lg font-semibold ${
@@ -116,6 +138,12 @@ const AudioRecorder = ({ onTranscriptionComplete }) => {
       {isRecording && (
         <p className="text-sm text-gray-600">
           Recording in progress (Current time: {recordingTime}s)
+        </p>
+      )}
+
+      {!isRecording && !!audioBlob && (
+        <p className="text-sm text-gray-600">
+          Final recording time: {recordingTime}s
         </p>
       )}
     </div>
